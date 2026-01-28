@@ -1,0 +1,773 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>中医智能问诊 - 专业管理后台</title>
+    <!-- 引入 Ant Design 样式 -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/antd@4.24.15/dist/antd.min.css" />
+    <style>
+        body { background-color: #f0f2f5; margin: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; }
+        .admin-layout { min-height: 100vh; }
+        .admin-header { background: #fff; padding: 0 24px; display: flex; align-items: center; justify-content: space-between; box-shadow: 0 1px 4px rgba(0,21,41,.08); position: sticky; top: 0; z-index: 10; }
+        .admin-logo { font-size: 18px; font-weight: bold; color: #1890ff; display: flex; align-items: center; }
+        .admin-logo img { height: 32px; margin-right: 12px; }
+        .admin-content { padding: 24px; }
+        .table-card { background: #fff; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.06); }
+        .table-operations { margin-bottom: 20px; display: flex; justify-content: space-between; align-items: center; }
+        .search-input { width: 320px; }
+        
+        /* 登录页样式 */
+        .login-container { height: 100vh; display: flex; align-items: center; justify-content: center; background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%); }
+        .login-box { width: 400px; padding: 40px; background: #fff; border-radius: 12px; box-shadow: 0 10px 25px rgba(0,0,0,0.1); }
+        .login-title { text-align: center; margin-bottom: 32px; font-size: 24px; color: #1f1f1f; font-weight: 600; }
+        
+        /* 统计卡片样式 */
+        .stat-card { border-radius: 8px; transition: all 0.3s; }
+        .stat-card:hover { transform: translateY(-4px); box-shadow: 0 4px 12px rgba(0,0,0,0.1); }
+        .stat-value { font-size: 28px; font-weight: bold; color: #1890ff; }
+        .stat-label { color: #8c8c8c; margin-top: 4px; }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <!-- 基础库加载 -->
+    <script src="https://cdn.jsdelivr.net/npm/react@18.2.0/umd/react.production.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/react-dom@18.2.0/umd/react-dom.production.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/moment@2.29.4/moment.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/moment/locale/zh-cn.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/antd@4.24.15/dist/antd.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@ant-design/icons@4.7.0/dist/index.umd.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/echarts@5.4.3/dist/echarts.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@babel/standalone@7.23.5/babel.min.js"></script>
+
+    <script type="text/babel">
+        const { useState, useEffect, useCallback, useMemo, useRef } = React;
+        const { 
+            Layout, Table, Button, Input, Space, Modal, Form, 
+            message, Popconfirm, Card, Typography, Tag, Row, Col, Statistic, Avatar, Dropdown, Menu, Radio
+        } = antd;
+        const { Header, Content } = Layout;
+        const { Search } = Input;
+        const { Title, Text } = Typography;
+
+        // 全局错误捕获
+        window.onerror = (msg, url, line, col, error) => {
+            console.error('System Error:', {msg, url, line, col, error});
+            return false;
+        };
+
+        // 图标组件包装器
+        const SafeIcon = ({ name, fallback }) => {
+            try {
+                const lib = window.AntDesignIcons || window.icons || {};
+                const IconComp = lib[name];
+                return IconComp ? React.createElement(IconComp) : <span>{fallback}</span>;
+            } catch (e) {
+                return <span>{fallback}</span>;
+            }
+        };
+
+        const UserIcon = () => <SafeIcon name="UserOutlined" fallback="👤" />;
+        const LockIcon = () => <SafeIcon name="LockOutlined" fallback="🔒" />;
+        const LogoutIcon = () => <SafeIcon name="LogoutOutlined" fallback="🚪" />;
+        const DatabaseIcon = () => <SafeIcon name="DatabaseOutlined" fallback="📁" />;
+        const BulbIcon = () => <SafeIcon name="BulbOutlined" fallback="💡" />;
+        const TeamIcon = () => <SafeIcon name="TeamOutlined" fallback="👥" />;
+        const FileTextIcon = () => <SafeIcon name="FileTextOutlined" fallback="📄" />;
+        const ReadIcon = () => <SafeIcon name="ReadOutlined" fallback="📖" />;
+
+        // 穴位管理组件
+        const AcupunctureManager = () => {
+            const [data, setData] = useState([]);
+            const [loading, setLoading] = useState(false);
+            const [isModalVisible, setIsModalVisible] = useState(false);
+            const [editingItem, setEditingItem] = useState(null);
+            const [form] = Form.useForm();
+
+            const loadData = async () => {
+                setLoading(true);
+                try {
+                    const res = await api.fetchAcupunctureData();
+                    if (res.code === 200) setData(res.data);
+                } catch (err) {
+                    message.error('加载穴位数据失败');
+                } finally {
+                    setLoading(false);
+                }
+            };
+
+            useEffect(() => { loadData(); }, []);
+
+            const handleSave = async () => {
+                try {
+                    const values = await form.validateFields();
+                    // 处理 points 和 dietary 字符串转数组
+                    const formattedValues = {
+                        ...values,
+                        points: typeof values.points === 'string' ? JSON.parse(values.points) : values.points,
+                        dietary: typeof values.dietary === 'string' ? JSON.parse(values.dietary) : values.dietary
+                    };
+
+                    let newData;
+                    if (editingItem) {
+                        newData = data.map(item => item.id === editingItem.id ? { ...item, ...formattedValues } : item);
+                    } else {
+                        newData = [...data, { ...formattedValues, id: Date.now().toString() }];
+                    }
+
+                    const res = await api.saveAcupunctureData(newData);
+                    if (res.code === 200) {
+                        message.success('保存成功');
+                        setIsModalVisible(false);
+                        loadData();
+                    }
+                } catch (err) {
+                    message.error('保存失败: ' + err.message);
+                }
+            };
+
+            const handleDelete = async (id) => {
+                const newData = data.filter(item => item.id !== id);
+                const res = await api.saveAcupunctureData(newData);
+                if (res.code === 200) {
+                    message.success('删除成功');
+                    loadData();
+                }
+            };
+
+            const columns = [
+                { title: '名称', dataIndex: 'name', key: 'name', width: 120 },
+                { title: '描述', dataIndex: 'desc', key: 'desc', ellipsis: true },
+                { 
+                    title: '操作', 
+                    key: 'action', 
+                    width: 150, 
+                    render: (_, record) => (
+                        <Space>
+                            <Button type="link" onClick={() => { 
+                                setEditingItem(record); 
+                                form.setFieldsValue({
+                                    ...record,
+                                    points: JSON.stringify(record.points, null, 2),
+                                    dietary: JSON.stringify(record.dietary, null, 2)
+                                }); 
+                                setIsModalVisible(true); 
+                            }}>编辑</Button>
+                            <Popconfirm title="确定删除？" onConfirm={() => handleDelete(record.id)}>
+                                <Button type="link" danger>删除</Button>
+                            </Popconfirm>
+                        </Space>
+                    )
+                }
+            ];
+
+            return (
+                <Card title="穴位百科管理" extra={<Button type="primary" onClick={() => { setEditingItem(null); form.resetFields(); setIsModalVisible(true); }}>新增类别</Button>}>
+                    <Table columns={columns} dataSource={data} rowKey="id" loading={loading} />
+                    <Modal title={editingItem ? '编辑穴位类别' : '新增穴位类别'} visible={isModalVisible} onOk={handleSave} onCancel={() => setIsModalVisible(false)} width={800}>
+                        <Form form={form} layout="vertical">
+                            <Form.Item name="name" label="名称" rules={[{ required: true }]}><Input /></Form.Item>
+                            <Form.Item name="icon" label="图标 (Emoji)" rules={[{ required: true }]}><Input /></Form.Item>
+                            <Form.Item name="desc" label="描述" rules={[{ required: true }]}><Input.TextArea /></Form.Item>
+                            <Form.Item name="points" label="穴位列表 (JSON 格式)" rules={[{ required: true }]}>
+                                <Input.TextArea rows={8} placeholder='[{"name": "...", "meridian": "...", "location": "...", "function": "...", "method": "..."}]' />
+                            </Form.Item>
+                            <Form.Item name="dietary" label="食疗列表 (JSON 格式)" rules={[{ required: true }]}>
+                                <Input.TextArea rows={8} placeholder='[{"name": "...", "ingredients": "...", "practice": "...", "function": "...", "note": "..."}]' />
+                            </Form.Item>
+                        </Form>
+                    </Modal>
+                </Card>
+            );
+        };
+
+        // 症状对照管理组件
+        const SymptomComparisonManager = () => {
+            const [data, setData] = useState({});
+            const [loading, setLoading] = useState(false);
+            const [isModalVisible, setIsModalVisible] = useState(false);
+            const [editingKey, setEditingKey] = useState(null);
+            const [form] = Form.useForm();
+
+            const loadData = async () => {
+                setLoading(true);
+                try {
+                    const res = await api.fetchSymptomComparisonData();
+                    if (res.code === 200) setData(res.data);
+                } catch (err) {
+                    message.error('加载症状对照数据失败');
+                } finally {
+                    setLoading(false);
+                }
+            };
+
+            useEffect(() => { loadData(); }, []);
+
+            const handleSave = async () => {
+                try {
+                    const values = await form.validateFields();
+                    const formattedComparisons = typeof values.comparisons === 'string' ? JSON.parse(values.comparisons) : values.comparisons;
+                    
+                    const newData = { ...data };
+                    if (editingKey && editingKey !== values.symptom) {
+                        delete newData[editingKey];
+                    }
+                    newData[values.symptom] = formattedComparisons;
+
+                    const res = await api.saveSymptomComparisonData(newData);
+                    if (res.code === 200) {
+                        message.success('保存成功');
+                        setIsModalVisible(false);
+                        loadData();
+                    }
+                } catch (err) {
+                    message.error('保存失败: ' + err.message);
+                }
+            };
+
+            const handleDelete = async (key) => {
+                const newData = { ...data };
+                delete newData[key];
+                const res = await api.saveSymptomComparisonData(newData);
+                if (res.code === 200) {
+                    message.success('删除成功');
+                    loadData();
+                }
+            };
+
+            const columns = [
+                { title: '症状关键词', dataIndex: 'symptom', key: 'symptom', width: 150 },
+                { 
+                    title: '对照项数量', 
+                    key: 'count', 
+                    render: (_, record) => record.comparisons.length 
+                },
+                { 
+                    title: '操作', 
+                    key: 'action', 
+                    width: 150, 
+                    render: (_, record) => (
+                        <Space>
+                            <Button type="link" onClick={() => { 
+                                setEditingKey(record.symptom); 
+                                form.setFieldsValue({
+                                    symptom: record.symptom,
+                                    comparisons: JSON.stringify(record.comparisons, null, 2)
+                                }); 
+                                setIsModalVisible(true); 
+                            }}>编辑</Button>
+                            <Popconfirm title="确定删除？" onConfirm={() => handleDelete(record.symptom)}>
+                                <Button type="link" danger>删除</Button>
+                            </Popconfirm>
+                        </Space>
+                    )
+                }
+            ];
+
+            const tableData = Object.keys(data).map(key => ({
+                symptom: key,
+                comparisons: data[key]
+            }));
+
+            return (
+                <Card title="症状对照自查管理" extra={<Button type="primary" onClick={() => { setEditingKey(null); form.resetFields(); setIsModalVisible(true); }}>新增症状</Button>}>
+                    <Table columns={columns} dataSource={tableData} rowKey="symptom" loading={loading} />
+                    <Modal title={editingKey ? '编辑症状对照' : '新增症状对照'} visible={isModalVisible} onOk={handleSave} onCancel={() => setIsModalVisible(false)} width={800}>
+                        <Form form={form} layout="vertical">
+                            <Form.Item name="symptom" label="症状关键词" rules={[{ required: true }]}><Input placeholder="如：咽痛、发热" /></Form.Item>
+                            <Form.Item name="comparisons" label="对照详情 (JSON 格式)" rules={[{ required: true }]}>
+                                <Input.TextArea rows={12} placeholder='[{"title": "...", "feature": "...", "accompanying_signs": "...", "self_observation_tip": "...", "diet_advice": "...", "living_advice": "...", "treatment_suggestion": "..."}]' />
+                            </Form.Item>
+                        </Form>
+                    </Modal>
+                </Card>
+            );
+        };
+
+        // 中医常识管理组件
+        const KnowledgeManager = () => {
+            const [data, setData] = useState([]);
+            const [loading, setLoading] = useState(false);
+            const [isModalVisible, setIsModalVisible] = useState(false);
+            const [editingItem, setEditingItem] = useState(null);
+            const [form] = Form.useForm();
+
+            const loadData = async () => {
+                setLoading(true);
+                try {
+                    const res = await api.fetchKnowledgeData();
+                    if (res.code === 200) setData(res.data);
+                } catch (err) {
+                    message.error('加载中医常识数据失败');
+                } finally {
+                    setLoading(false);
+                }
+            };
+
+            useEffect(() => { loadData(); }, []);
+
+            const handleSave = async () => {
+                try {
+                    const values = await form.validateFields();
+                    const formattedSections = typeof values.sections === 'string' ? JSON.parse(values.sections) : values.sections;
+                    
+                    let newData;
+                    if (editingItem) {
+                        newData = data.map(item => item.id === editingItem.id ? { ...item, ...values, sections: formattedSections } : item);
+                    } else {
+                        newData = [...data, { ...values, id: Date.now().toString(), sections: formattedSections }];
+                    }
+
+                    const res = await api.saveKnowledgeData(newData);
+                    if (res.code === 200) {
+                        message.success('保存成功');
+                        setIsModalVisible(false);
+                        loadData();
+                    }
+                } catch (err) {
+                    message.error('保存失败: ' + err.message);
+                }
+            };
+
+            const handleDelete = async (id) => {
+                const newData = data.filter(item => item.id !== id);
+                const res = await api.saveKnowledgeData(newData);
+                if (res.code === 200) {
+                    message.success('删除成功');
+                    loadData();
+                }
+            };
+
+            const columns = [
+                { title: '标题', dataIndex: 'title', key: 'title', width: 200 },
+                { title: '图标', dataIndex: 'icon', key: 'icon', width: 80 },
+                { 
+                    title: '内容项数量', 
+                    key: 'count', 
+                    width: 120,
+                    render: (_, record) => record.sections.length 
+                },
+                { 
+                    title: '操作', 
+                    key: 'action', 
+                    width: 150, 
+                    render: (_, record) => (
+                        <Space>
+                            <Button type="link" onClick={() => { 
+                                setEditingItem(record); 
+                                form.setFieldsValue({
+                                    ...record,
+                                    sections: JSON.stringify(record.sections, null, 2)
+                                }); 
+                                setIsModalVisible(true); 
+                            }}>编辑</Button>
+                            <Popconfirm title="确定删除？" onConfirm={() => handleDelete(record.id)}>
+                                <Button type="link" danger>删除</Button>
+                            </Popconfirm>
+                        </Space>
+                    )
+                }
+            ];
+
+            return (
+                <Card title="中医常识管理" extra={<Button type="primary" onClick={() => { setEditingItem(null); form.resetFields(); setIsModalVisible(true); }}>新增常识</Button>}>
+                    <Table columns={columns} dataSource={data} rowKey="id" loading={loading} />
+                    <Modal title={editingItem ? '编辑中医常识' : '新增中医常识'} visible={isModalVisible} onOk={handleSave} onCancel={() => setIsModalVisible(false)} width={800}>
+                        <Form form={form} layout="vertical">
+                            <Form.Item name="title" label="标题" rules={[{ required: true }]}><Input placeholder="如：认识中医、经络养生" /></Form.Item>
+                            <Form.Item name="icon" label="图标 (Emoji)" rules={[{ required: true }]}><Input placeholder="如：🌿、🧘" /></Form.Item>
+                            <Form.Item name="sections" label="常识内容 (JSON 格式)" rules={[{ required: true }]}>
+                                <Input.TextArea rows={15} placeholder='[{"title": "...", "content": "..."}]' />
+                            </Form.Item>
+                        </Form>
+                    </Modal>
+                </Card>
+            );
+        };
+
+        // API 封装
+        const api = {
+            async fetchSyndromes(params) {
+                const query = new URLSearchParams(params).toString();
+                const res = await fetch(`/api/admin/syndromes?${query}`);
+                return res.json();
+            },
+            async saveSyndrome(data) {
+                const res = await fetch('/api/admin/syndrome', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(data)
+                });
+                return res.json();
+            },
+            async deleteSyndromes(ids) {
+                const res = await fetch('/api/admin/syndromes', {
+                    method: 'DELETE',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ ids })
+                });
+                return res.json();
+            },
+            async fetchPatientStats(timeRange = 'all') {
+                const res = await fetch(`/api/admin/patient-stats?timeRange=${timeRange}`);
+                return res.json();
+            },
+            async fetchDiagnosisRecords(params) {
+                const query = new URLSearchParams(params).toString();
+                const res = await fetch(`/api/admin/diagnosis-records?${query}`);
+                return res.json();
+            },
+            async fetchConstitutionStats(timeRange = 'all') {
+                const res = await fetch(`/api/admin/constitution-stats?timeRange=${timeRange}`);
+                return res.json();
+            },
+            async fetchAcupunctureData() {
+                const res = await fetch('/api/admin/acupuncture-data');
+                return res.json();
+            },
+            async saveAcupunctureData(data) {
+                const res = await fetch('/api/admin/acupuncture-data', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(data)
+                });
+                return res.json();
+            },
+            async fetchSymptomComparisonData() {
+                const res = await fetch('/api/admin/symptom-comparison');
+                return res.json();
+            },
+            async saveSymptomComparisonData(data) {
+                const res = await fetch('/api/admin/symptom-comparison', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(data)
+                });
+                return res.json();
+            },
+            async fetchKnowledgeData() {
+                const res = await fetch('/api/admin/knowledge');
+                return res.json();
+            },
+            async saveKnowledgeData(data) {
+                const res = await fetch('/api/admin/knowledge', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(data)
+                });
+                return res.json();
+            }
+        };
+
+        // 登录页面
+        const LoginPage = ({ onLogin }) => {
+            const [loading, setLoading] = useState(false);
+            const onFinish = (values) => {
+                setLoading(true);
+                setTimeout(() => {
+                    if (values.username === 'admin' && values.password === '123456') {
+                        message.success('登录成功');
+                        onLogin(values.username);
+                    } else {
+                        message.error('用户名或密码错误');
+                    }
+                    setLoading(false);
+                }, 800);
+            };
+            return (
+                <div className="login-container">
+                    <div className="login-box">
+                        <div className="login-title">中医问诊后台登录</div>
+                        <Form onFinish={onFinish} layout="vertical" size="large">
+                            <Form.Item name="username" rules={[{ required: true, message: '请输入用户名' }]}>
+                                <Input prefix={<UserIcon />} placeholder="用户名" />
+                            </Form.Item>
+                            <Form.Item name="password" rules={[{ required: true, message: '请输入密码' }]}>
+                                <Input.Password prefix={<LockIcon />} placeholder="密码" />
+                            </Form.Item>
+                            <Form.Item>
+                                <Button type="primary" htmlType="submit" block loading={loading}>登录</Button>
+                            </Form.Item>
+                        </Form>
+                    </div>
+                </div>
+            );
+        };
+
+        // 管理面板
+        const AdminPanel = ({ user, onLogout }) => {
+            const [data, setData] = useState([]);
+            const [patientStats, setPatientStats] = useState([]);
+            const [constitutionStats, setConstitutionStats] = useState([]);
+            const [diagnosisRecords, setDiagnosisRecords] = useState([]);
+            const [timeRange, setTimeRange] = useState('all');
+            const [loading, setLoading] = useState(false);
+            const [recordLoading, setRecordLoading] = useState(false);
+            const [total, setTotal] = useState(0);
+            const [recordTotal, setRecordTotal] = useState(0);
+            const [current, setCurrent] = useState(1);
+            const [recordCurrent, setRecordCurrent] = useState(1);
+            const [pageSize, setPageSize] = useState(10);
+            const [keyword, setKeyword] = useState('');
+            const [isModalVisible, setIsModalVisible] = useState(false);
+            const [editingItem, setEditingItem] = useState(null);
+            const [activeTab, setActiveTab] = useState('1');
+            const [form] = Form.useForm();
+            const chartRef = useRef(null);
+            const constitutionChartRef = useRef(null);
+            const chartInstance = useRef(null);
+            const constitutionChartInstance = useRef(null);
+
+            const loadData = useCallback(async (page = current, size = pageSize, kw = keyword, tr = timeRange) => {
+                setLoading(true);
+                try {
+                    const [res, statsRes, constRes] = await Promise.all([
+                        api.fetchSyndromes({ current: page, pageSize: size, keyword: kw }),
+                        api.fetchPatientStats(tr),
+                        api.fetchConstitutionStats(tr)
+                    ]);
+                    if (res.code === 200) {
+                        setData(res.data.list);
+                        setTotal(res.data.total);
+                    }
+                    if (statsRes.code === 200) {
+                        setPatientStats(statsRes.data);
+                        updateChart(statsRes.data);
+                    }
+                    if (constRes.code === 200) {
+                        setConstitutionStats(constRes.data);
+                        updateConstitutionChart(constRes.data);
+                    }
+                } catch (err) {
+                    message.error('加载数据失败');
+                } finally {
+                    setLoading(false);
+                }
+            }, [current, pageSize, keyword, timeRange]);
+
+            const loadRecords = useCallback(async (page = recordCurrent) => {
+                setRecordLoading(true);
+                try {
+                    const res = await api.fetchDiagnosisRecords({ current: page, pageSize: 10 });
+                    if (res.code === 200) {
+                        setDiagnosisRecords(res.data.list);
+                        setRecordTotal(res.data.total);
+                    }
+                } catch (err) {
+                    message.error('加载记录失败');
+                } finally {
+                    setRecordLoading(false);
+                }
+            }, [recordCurrent]);
+
+            const updateChart = (statsData) => {
+                if (!chartRef.current) return;
+                if (!chartInstance.current) {
+                    chartInstance.current = echarts.init(chartRef.current);
+                }
+                chartInstance.current.setOption({
+                    title: { text: '病症分布比例', left: 'center' },
+                    tooltip: { trigger: 'item', formatter: '{b} : {c} ({d}%)' },
+                    series: [{
+                        type: 'pie',
+                        radius: '55%',
+                        data: statsData.map(d => ({ name: d.name, value: d.value })),
+                        emphasis: { itemStyle: { shadowBlur: 10, shadowColor: 'rgba(0,0,0,0.5)' } }
+                    }]
+                });
+            };
+
+            const updateConstitutionChart = (statsData) => {
+                if (!constitutionChartRef.current) return;
+                if (!constitutionChartInstance.current) {
+                    constitutionChartInstance.current = echarts.init(constitutionChartRef.current);
+                }
+                constitutionChartInstance.current.setOption({
+                    title: { text: '测试人体质分布', left: 'center' },
+                    tooltip: { trigger: 'item', formatter: '{b} : {c} ({d}%)' },
+                    series: [{
+                        type: 'pie',
+                        radius: '55%',
+                        data: statsData.map(d => ({ name: d.name, value: d.value })),
+                        color: ['#91cc75', '#fac858', '#ee6666', '#73c0de', '#3ba272', '#fc8452', '#9a60b4', '#ea7ccc'],
+                        emphasis: { itemStyle: { shadowBlur: 10, shadowColor: 'rgba(0,0,0,0.5)' } }
+                    }]
+                });
+            };
+
+            useEffect(() => {
+                loadData();
+                loadRecords();
+                const resize = () => {
+                    chartInstance.current?.resize();
+                    constitutionChartInstance.current?.resize();
+                };
+                window.addEventListener('resize', resize);
+                return () => window.removeEventListener('resize', resize);
+            }, [loadData, loadRecords]);
+
+            const columns = [
+                { title: '证型名称', dataIndex: 'name', key: 'name', width: 140, render: t => <Tag color="blue">{t}</Tag> },
+                { title: '辨证描述', dataIndex: 'description', key: 'description', ellipsis: true },
+                { title: '治法原则', dataIndex: 'treatment_principle', key: 'treatment_principle', width: 180 },
+                { 
+                    title: '操作', 
+                    key: 'action', 
+                    width: 150, 
+                    render: (_, record) => (
+                        <Space>
+                            <Button type="link" onClick={() => { setEditingItem(record); form.setFieldsValue(record); setIsModalVisible(true); }}>编辑</Button>
+                            <Popconfirm title="确定删除？" onConfirm={async () => {
+                                await api.deleteSyndromes([record.id]);
+                                message.success('删除成功');
+                                loadData();
+                            }}>
+                                <Button type="link" danger>删除</Button>
+                            </Popconfirm>
+                        </Space>
+                    )
+                }
+            ];
+
+            const recordColumns = [
+                { title: 'ID', dataIndex: 'id', key: 'id', width: 80 },
+                { title: '诊断时间', dataIndex: 'timestamp', key: 'timestamp', width: 180, render: t => moment(t).format('YYYY-MM-DD HH:mm:ss') },
+                { title: '确诊证型', dataIndex: 'syndrome', key: 'syndrome', render: t => <Tag color="green">{t}</Tag> },
+                { title: '状态', key: 'status', width: 100, render: () => <Tag color="processing">已完成</Tag> }
+            ];
+
+            return (
+                <Layout className="admin-layout">
+                    <Header className="admin-header">
+                        <div className="admin-logo">🌿 中医智能问诊后台</div>
+                        <Dropdown overlay={<Menu><Menu.Item key="logout" onClick={onLogout} icon={<LogoutIcon />}>退出登录</Menu.Item></Menu>}>
+                            <Space style={{ cursor: 'pointer' }}>
+                                <Avatar icon={<UserIcon />} />
+                                <Text strong>{user}</Text>
+                            </Space>
+                        </Dropdown>
+                    </Header>
+                    <Content className="admin-content">
+                        <Row gutter={[24, 24]} style={{ marginBottom: 24 }}>
+                            <Col span={6}><Card bordered={false}><Statistic title="证型总数" value={total} prefix={<DatabaseIcon />} /></Card></Col>
+                            <Col span={6}><Card bordered={false}><Statistic title="引擎状态" value="运行中" prefix={<BulbIcon />} valueStyle={{ color: '#52c41a' }} /></Card></Col>
+                            <Col span={6}><Card bordered={false}><Statistic title="累计咨询" value={recordTotal} prefix={<TeamIcon />} /></Card></Col>
+                            <Col span={6}><Card bordered={false}><Statistic title="系统状态" value="正常" prefix={<BulbIcon />} valueStyle={{ color: '#faad14' }} /></Card></Col>
+                        </Row>
+                        
+                        <antd.Tabs activeKey={activeTab} onChange={setActiveTab} type="card" style={{ background: '#fff', padding: '16px', borderRadius: '8px' }}>
+                            <antd.Tabs.TabPane tab="数据概览" key="1">
+                                <Row gutter={[24, 24]}>
+                                    <Col span={12}>
+                                        <Card title="病症分布" className="table-card" bordered={false} extra={
+                                            <Radio.Group value={timeRange} onChange={e => setTimeRange(e.target.value)} size="small">
+                                                <Radio.Button value="all">全部</Radio.Button>
+                                                <Radio.Button value="month">本月</Radio.Button>
+                                                <Radio.Button value="week">本周</Radio.Button>
+                                                <Radio.Button value="today">本日</Radio.Button>
+                                            </Radio.Group>
+                                        }>
+                                            <div ref={chartRef} style={{ height: 300 }}></div>
+                                        </Card>
+                                    </Col>
+                                    <Col span={12}>
+                                        <Card title="体质分布" className="table-card" bordered={false} extra={
+                                            <Radio.Group value={timeRange} onChange={e => setTimeRange(e.target.value)} size="small">
+                                                <Radio.Button value="all">全部</Radio.Button>
+                                                <Radio.Button value="month">本月</Radio.Button>
+                                                <Radio.Button value="week">本周</Radio.Button>
+                                                <Radio.Button value="today">本日</Radio.Button>
+                                            </Radio.Group>
+                                        }>
+                                            <div ref={constitutionChartRef} style={{ height: 300 }}></div>
+                                        </Card>
+                                    </Col>
+                                </Row>
+                                <Row gutter={[24, 24]} style={{ marginTop: 24 }}>
+                                    <Col span={24}>
+                                        <Card title="季节性统计" className="table-card" bordered={false} extra={
+                                            <Radio.Group value={timeRange} onChange={e => setTimeRange(e.target.value)} size="small">
+                                                <Radio.Button value="spring">春季</Radio.Button>
+                                                <Radio.Button value="summer">夏季</Radio.Button>
+                                                <Radio.Button value="autumn">秋季</Radio.Button>
+                                                <Radio.Button value="winter">冬季</Radio.Button>
+                                            </Radio.Group>
+                                        }>
+                                            <Text type="secondary">季节性病症分布情况，可协助分析季节与疾病的关联性。</Text>
+                                        </Card>
+                                    </Col>
+                                </Row>
+                            </antd.Tabs.TabPane>
+                            <antd.Tabs.TabPane tab="证型管理" key="2">
+                                <Card title="证型列表" bordered={false} extra={
+                                    <Search placeholder="搜索证型名称" onSearch={v => { setKeyword(v); setCurrent(1); }} style={{ width: 250 }} />
+                                }>
+                                    <Table 
+                                        columns={columns} 
+                                        dataSource={data} 
+                                        rowKey="id" 
+                                        loading={loading}
+                                        pagination={{ current, pageSize, total, onChange: (p, s) => { setCurrent(p); setPageSize(s); } }}
+                                    />
+                                </Card>
+                            </antd.Tabs.TabPane>
+                            <antd.Tabs.TabPane tab="诊断记录" key="3">
+                                <Card title="最近患者诊断记录" bordered={false}>
+                                    <Table 
+                                        columns={recordColumns} 
+                                        dataSource={diagnosisRecords} 
+                                        rowKey="id" 
+                                        loading={recordLoading}
+                                        pagination={{ current: recordCurrent, pageSize: 10, total: recordTotal, onChange: (p) => setRecordCurrent(p) }}
+                                    />
+                                </Card>
+                            </antd.Tabs.TabPane>
+                            <antd.Tabs.TabPane tab="穴位管理" key="4">
+                                <AcupunctureManager />
+                            </antd.Tabs.TabPane>
+                            <antd.Tabs.TabPane tab="症状对照管理" key="5">
+                                <SymptomComparisonManager />
+                            </antd.Tabs.TabPane>
+                            <antd.Tabs.TabPane tab="中医常识管理" key="6">
+                                <KnowledgeManager />
+                            </antd.Tabs.TabPane>
+                        </antd.Tabs>
+                    </Content>
+
+                    <Modal title={editingItem ? '编辑证型' : '新增证型'} visible={isModalVisible} onOk={async () => {
+                        const values = await form.validateFields();
+                        await api.saveSyndrome({ ...values, id: editingItem?.id });
+                        message.success('保存成功');
+                        setIsModalVisible(false);
+                        loadData();
+                    }} onCancel={() => setIsModalVisible(false)}>
+                        <Form form={form} layout="vertical">
+                            <Form.Item name="name" label="证型名称" rules={[{ required: true }]}>
+                                <Input />
+                            </Form.Item>
+                            <Form.Item name="description" label="辨证描述" rules={[{ required: true }]}>
+                                <Input.TextArea rows={4} />
+                            </Form.Item>
+                            <Form.Item name="treatment_principle" label="治法原则">
+                                <Input />
+                            </Form.Item>
+                        </Form>
+                    </Modal>
+                </Layout>
+            );
+        };
+
+        const App = () => {
+            const [user, setUser] = useState(localStorage.getItem('admin_user'));
+            return user ? 
+                <AdminPanel user={user} onLogout={() => { localStorage.removeItem('admin_user'); setUser(null); }} /> : 
+                <LoginPage onLogin={u => { localStorage.setItem('admin_user', u); setUser(u); }} />;
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
